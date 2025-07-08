@@ -93,8 +93,9 @@ type rhcosStore struct {
 }
 
 const (
-	ImageTypeFull    = "full-iso"
-	ImageTypeMinimal = "minimal-iso"
+	ImageTypeFull            = "full-iso"
+	ImageTypeMinimal         = "minimal-iso"
+	ImageTypeDisconnectedIso = "disconnected-iso"
 )
 
 func NewImageStore(ed isoeditor.Editor, dataDir, imageServiceBaseURL string, insecureSkipVerify bool, versions []map[string]string,
@@ -252,7 +253,9 @@ func (s *rhcosStore) Populate(ctx context.Context) error {
 			imageVersion := imageInfo["version"]
 			arch := imageInfo["cpu_architecture"]
 
-			fullPath := filepath.Join(s.dataDir, isoFileName(ImageTypeFull, openshiftVersion, imageVersion, arch))
+			imageType := s.getImageType(imageInfo)
+
+			fullPath := filepath.Join(s.dataDir, isoFileName(imageType, openshiftVersion, imageVersion, arch))
 			if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 				url := imageInfo["url"]
 				log.Infof("Downloading iso from %s to %s", url, fullPath)
@@ -291,9 +294,13 @@ func (s *rhcosStore) Populate(ctx context.Context) error {
 			return fmt.Errorf("failed to extract and cache nmstatectl for %s-%s: %v", openshiftVersion, arch, err)
 		}
 
-		// Don't attempt to create a minimal ISO for s390x because there's no easy way to edit the kernel parameters
-		// This means that the rootfs URL can't be added which makes it impossible for us to create a minimal ISO
-		if arch == "s390x" {
+		imageType := s.getImageType(imageInfo)
+
+		// Don't attempt to create a minimal ISO for:
+		// - disconnected-interactive-iso: it's meant to be a full ISO with embedded ignition
+		// - s390x: because there's no easy way to edit the kernel parameters
+		//   This means that the rootfs URL can't be added which makes it impossible for us to create a minimal ISO
+		if arch == "s390x" || imageType == ImageTypeDisconnectedIso {
 			continue
 		}
 		minimalPath := filepath.Join(s.dataDir, isoFileName(ImageTypeMinimal, openshiftVersion, imageVersion, arch))
@@ -320,6 +327,13 @@ func (s *rhcosStore) Populate(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (*rhcosStore) getImageType(imageInfo map[string]string) string {
+	if imageType, ok := imageInfo["type"]; ok && imageType != "" {
+		return imageType
+	}
+	return ImageTypeFull // default to full if not specified
 }
 
 // extractAndCacheNmstatectl extracts nmstatectl from the rootfs and caches it for later use
